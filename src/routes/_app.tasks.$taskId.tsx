@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { useStore, useCurrentUser, store, can, type TaskStatus } from "@/lib/mock-store";
 import { StatusBadge, PriorityBadge } from "@/components/StatusBadge";
-import { cn } from "@/lib/utils";
+import { cn, parseDate } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/tasks/$taskId")({
   head: () => ({ meta: [{ title: "Detail Tugas — TaskControl" }] }),
@@ -49,8 +49,6 @@ useEffect(() => {
 
   if (!alreadyRead && user.id !== task.createdBy && !isAdminOnDefault) {
     store.markRead(task.id, user.id);
-
-    store.markRead(task.id, user.id);
   }
 }, [task]);
 
@@ -58,7 +56,10 @@ useEffect(() => {
 
   const assignee = users.find((u) => u.id === task.assignedTo);
   const creator = users.find((u) => u.id === task.createdBy);
-  const overdue = myStatus !== "done" && new Date(task.deadline) < new Date();
+  const overdue = myStatus !== "done" && (() => {
+    const d = parseDate(task.deadline);
+    return d ? d < new Date() : false;
+  })();
   const canEdit = user.id === task.assignedTo || user.role === "admin" || user.role === "hrd" || task.isDefault;
   const canDelete = can.createTask(user.role);
 
@@ -139,7 +140,10 @@ useEffect(() => {
               <Meta
                 icon={Calendar}
                 label="Deadline"
-                value={format(new Date(task.deadline), "dd MMM yyyy")}
+                value={(() => {
+                  const d = parseDate(task.deadline);
+                  return d ? format(d, "dd MMM yyyy") : "—";
+                })()}
                 tone={overdue ? "destructive" : undefined}
               />
             </div>

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, parseDate } from "@/lib/utils";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -27,7 +27,8 @@ function Dashboard() {
   const users = useStore((s) => s.users || []);
   const checklists = useStore((s) => s.checklists || []);
   const isToday = (date: string) => {
-    const d = new Date(date);
+    const d = parseDate(date);
+    if (!d) return false;
     const now = new Date();
     return (
       d.getDate() === now.getDate() &&
@@ -66,9 +67,10 @@ function Dashboard() {
 
   const visible = tasks.filter((t) => {
     // Strictly exclude default tasks (broadcast) from statistics
-    if (t.isDefault) return false; 
-    
+    if (t.isDefault) return false;
+
     if (user.role === "admin") return true;
+    // For non-admin, show tasks assigned to them or created by them
     return String(t.assignedTo) === String(user.id) || String(t.createdBy) === String(user.id);
   });
 
@@ -107,7 +109,8 @@ function Dashboard() {
         } else {
           notDoneCount++;
           notDoneTasks.push({ task: t, user: assignee, status });
-          if (new Date(t.deadline) < new Date()) {
+          const d = parseDate(t.deadline);
+          if (d && d < new Date()) {
             overdueCount++;
             overdueTasks.push({ task: t, user: assignee, status });
           }
@@ -208,8 +211,10 @@ function Dashboard() {
     );
   };
 
-  // Recent tasks for HR/Staff - only tagged tasks
-  const recent = [...visible].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 5);
+  // Recent tasks list for dashboard
+  const recent = (user.role === "admin" ? tasks : visible)
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    .slice(0, 5);
   const userName = (id?: string | number) =>
   users.find((u) => String(u.id) === String(id))?.name ?? "—";
 
@@ -380,101 +385,9 @@ const userRole = (id?: string | number) =>
       {/* Admin Monitoring Panel - Also shown for HR and Staff to unify layout */}
       {(user.role === "admin" || user.role === "hrd" || user.role === "staff") && (
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Task-based Checklist Monitor for Admin */}
-          {user.role === "admin" && (
-            <Card className="p-5 shadow-(--shadow-card) md:col-span-2 border-primary/20 bg-primary/5">
-              <h2 className="mb-4 text-base font-semibold text-primary">Monitoring Checklist Tugas Tim</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {users.filter(u => u.role !== "admin").map(u => {
-                  const userTasks = tasks.filter(t => String(t.assignedTo) === String(u.id) && !t.isDefault);
-                  const done = userTasks.filter(t => store.getUserTaskStatus(t.id, String(u.id)) === "done").length;
-                  return (
-                    <div key={u.id} className="bg-card rounded-lg p-3 border shadow-sm">
-                      <div className="flex items-center justify-between mb-2 border-b pb-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="font-bold text-sm truncate">{u.name}</div>
-                          <Badge variant="outline" className="text-[9px] h-4 uppercase shrink-0 px-1">{u.role}</Badge>
-                        </div>
-                        <Badge variant="secondary" className="text-[9px] h-4 shrink-0">
-                          {done}/{userTasks.length} Selesai
-                        </Badge>
-                      </div>
-                      <div className="space-y-1.5 pt-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
-                        {userTasks.map(t => {
-                          const taskStatus = store.getUserTaskStatus(t.id, String(u.id));
-                          return (
-                          <div key={t.id} className="flex items-center gap-2 text-[11px]">
-                            {taskStatus === "done" ? (
-                              <CheckCircle2 className="h-3 w-3 text-success shrink-0" />
-                            ) : (
-                              <Circle className="h-3 w-3 text-muted-foreground shrink-0" />
-                            )}
-                            <span className={cn("truncate", taskStatus === "done" && "text-muted-foreground line-through")}>
-                              {t.title}
-                            </span>
-                          </div>
-                        );
-                        })}
-                        {userTasks.length === 0 && (
-                          <div className="text-[10px] text-muted-foreground italic text-center py-4">
-                            Belum ada tugas khusus.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-          )}
+          
 
-          {/* Operational Checklist Monitor for Admin */}
-          {user.role === "admin" && (
-            <Card className="p-5 shadow-(--shadow-card) md:col-span-2 border-info/20 bg-info/5">
-              <h2 className="mb-4 text-base font-semibold text-info flex items-center gap-2">
-                <CheckSquare className="h-4 w-4" />
-                Monitoring Checklist Operasional Tim
-              </h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {checklists.map(c => {
-                  const creator = users.find(u => String(u.id) === String(c.createdBy));
-                  const completedCount = c.items.filter(i => i.completed).length;
-                  return (
-                    <div key={c.id} className="bg-card rounded-lg p-3 border shadow-sm flex flex-col h-full">
-                      <div className="flex items-center justify-between mb-2 border-b pb-1.5">
-                        <div className="min-w-0">
-                          <div className="font-bold text-sm truncate">{c.title}</div>
-                          <div className="text-[10px] text-muted-foreground uppercase">Oleh: {creator?.name || "Unknown"}</div>
-                        </div>
-                        <Badge variant={completedCount === c.items.length ? "default" : "secondary"} className="text-[9px] h-4 shrink-0">
-                          {completedCount}/{c.items.length}
-                        </Badge>
-                      </div>
-                      <div className="space-y-1.5 pt-1.5 overflow-y-auto pr-1 flex-1">
-                        {c.items.map(item => (
-                          <div key={item.id} className="flex items-center gap-2 text-[11px]">
-                            {item.completed ? (
-                              <CheckCircle2 className="h-3 w-3 text-success shrink-0" />
-                            ) : (
-                              <Circle className="h-3 w-3 text-muted-foreground shrink-0" />
-                            )}
-                            <span className={cn("truncate", item.completed && "text-muted-foreground line-through")}>
-                              {item.title}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-                {checklists.length === 0 && (
-                  <div className="col-span-full py-6 text-center text-sm text-muted-foreground italic">
-                    Belum ada checklist operasional dari tim.
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
+        
 
           {/* NEW: Default Task Reader Monitor for Admin */}
           {user.role === "admin" && (
@@ -614,7 +527,9 @@ const userRole = (id?: string | number) =>
                       <div className="flex items-center gap-1.5 truncate">
                         <span>Oleh: {userName(t.assignedTo ?? "")}</span>
                         <Badge variant="secondary" className="px-1 py-0 h-3 text-[8px] uppercase font-bold">{userRole(t.assignedTo ?? "")}</Badge>
-                        <span className="text-[8px] uppercase font-bold">· dari {userRole(t.createdBy)}</span>
+                        <span className="text-[8px] uppercase font-bold">
+                          · dari {userName(t.createdBy)}
+                        </span>
                       </div>
                       <span className="shrink-0">{formatDistanceToNow(new Date(t.createdAt), { addSuffix: true })}</span>
                     </div>
@@ -634,15 +549,16 @@ const userRole = (id?: string | number) =>
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {(user.role === "hrd" || user.role === "staff") && (
-          <Card className="p-5 lg:col-span-2 shadow-(--shadow-card)">
+        {(user.role === "admin" || user.role === "hrd" || user.role === "staff") && (
+          <Card className="p-5 lg:col-span-3 shadow-(--shadow-card)">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold">Tugas terbaru</h2>
               <Link to="/tasks" className="text-sm text-primary hover:underline">Lihat semua</Link>
             </div>
             <div className="space-y-3">
               {recent.map((t) => {
-                const status = store.getUserTaskStatus(t.id, user.id);
+                const targetUserId = t.assignedTo ?? "";
+                const status = store.getUserTaskStatus(t.id, user.role === "admin" ? targetUserId : user.id);
                 return (
                   <Link
                     key={t.id}
@@ -650,7 +566,7 @@ const userRole = (id?: string | number) =>
                     params={{ taskId: t.id }}
                     className="flex items-center justify-between rounded-lg border p-3 shadow-sm hover:border-primary/50 transition-colors group"
                     onClick={(e) => {
-                      if (status === "unread") {
+                      if (status === "unread" && user.role !== "admin") {
                         e.preventDefault();
                         store.markRead(t.id, user.id);
                       }
@@ -663,12 +579,34 @@ const userRole = (id?: string | number) =>
                       )} />
                       <div>
                         <div className="text-sm font-bold group-hover:text-primary transition-colors">{t.title}</div>
-                        <div className="text-[10px] text-muted-foreground uppercase">
-                          Deadline: {formatDistanceToNow(new Date(t.deadline), { addSuffix: true })}
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Penerima:</span>
+                            <span className="text-[10px] font-semibold uppercase">
+                              {t.isDefault ? "Seluruh Tim (HR & STAFF)" : userName(t.assignedTo)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">•</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Pengirim:</span>
+                            <span className="text-[10px] font-semibold uppercase">
+                              {userName(t.createdBy)}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">•</span>
+                          <span className="text-[10px] text-muted-foreground uppercase">
+                            Deadline: {formatDistanceToNow(new Date(t.deadline), { addSuffix: true })}
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <StatusBadge status={status} />
+                    {user.role === "admin" && t.isDefault ? (
+                      <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 text-[10px] font-bold uppercase tracking-tighter py-0 h-5 shrink-0">
+                        Broadcast
+                      </Badge>
+                    ) : (
+                      <StatusBadge status={status} />
+                    )}
                   </Link>
                 );
               })}
@@ -681,42 +619,44 @@ const userRole = (id?: string | number) =>
           </Card>
         )}
 
-        <Card className={cn("p-5 shadow-(--shadow-card)", (user.role === "hrd" || user.role === "staff") ? "" : "lg:col-span-3")}>
-          <h2 className="text-base font-semibold mb-4">Aktivitas Tim</h2>
-          <div className="space-y-4">
-            {uniqueLogs.slice(0, 8).map((l) => {
-              const task = tasks.find(t => t.id === l.taskId);
-              const targetName = task?.isDefault ? "Seluruh Tim" : userName(task?.assignedTo);
-              const targetRole = task?.isDefault ? "HR & STAFF" : userRole(task?.assignedTo);
-              
-              return (
-                <div key={l.id} className="flex gap-3 text-sm">
-                  <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                  <div className="min-w-0">
-                    <div className="truncate">
-                      <span className="font-medium text-primary">{userName(l.userId)}</span>{" "}
-                      <span className="text-[10px] bg-muted px-1 py-0.5 rounded font-bold uppercase tracking-wider">{userRole(l.userId)}</span>{" "}
-                      <span className="text-muted-foreground">
-                        {l.action === "created" && `membuat tugas baru "${l.taskTitle}" untuk ${targetName} (${targetRole})`}
-                        {l.action === "read" && `sudah membaca tugas "${l.taskTitle}"`}
-                        {l.action === "progress" && `mengupdate progres tugas "${l.taskTitle}" menjadi ${l.detail}`}
-                        {l.action === "done" && `telah menyelesaikan tugas "${l.taskTitle}"`}
-                        {l.action === "updated" && `memperbarui rincian tugas "${l.taskTitle}"`}
-                        {!["created", "read", "progress", "done", "updated"].includes(l.action) && `${actionLabel(l.action)} ${l.taskTitle}`}
-                      </span>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {formatDistanceToNow(new Date(l.timestamp), { addSuffix: true })}
+        {user.role === "admin" && (
+          <Card className="p-5 shadow-(--shadow-card) lg:col-span-3">
+            <h2 className="text-base font-semibold mb-4">Aktivitas Tim</h2>
+            <div className="space-y-4">
+              {uniqueLogs.slice(0, 8).map((l) => {
+                const task = tasks.find(t => t.id === l.taskId);
+                const targetName = task?.isDefault ? "Seluruh Tim" : userName(task?.assignedTo);
+                const targetRole = task?.isDefault ? "HR & STAFF" : userRole(task?.assignedTo);
+                
+                return (
+                  <div key={l.id} className="flex gap-3 text-sm">
+                    <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                    <div className="min-w-0">
+                      <div className="truncate">
+                        <span className="font-medium text-primary">{userName(l.userId)}</span>{" "}
+                        <span className="text-[10px] bg-muted px-1 py-0.5 rounded font-bold uppercase tracking-wider">{userRole(l.userId)}</span>{" "}
+                        <span className="text-muted-foreground">
+                          {l.action === "created" && `membuat tugas baru "${l.taskTitle}" untuk ${targetName} (${targetRole})`}
+                          {l.action === "read" && `sudah membaca tugas "${l.taskTitle}"`}
+                          {l.action === "progress" && `mengupdate progres tugas "${l.taskTitle}" menjadi ${l.detail}`}
+                          {l.action === "done" && `telah menyelesaikan tugas "${l.taskTitle}"`}
+                          {l.action === "updated" && `memperbarui rincian tugas "${l.taskTitle}"`}
+                          {!["created", "read", "progress", "done", "updated"].includes(l.action) && `${actionLabel(l.action)} ${l.taskTitle}`}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {formatDistanceToNow(new Date(l.timestamp), { addSuffix: true })}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-            {logs.length === 0 && (
-              <div className="py-8 text-center text-sm text-muted-foreground italic">Belum ada aktivitas tim.</div>
-            )}
-          </div>
-        </Card>
+                );
+              })}
+              {logs.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted-foreground italic">Belum ada aktivitas tim.</div>
+              )}
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );

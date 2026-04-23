@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,} from "@/components/ui/dialog";
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue,} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn, parseDate } from "@/lib/utils";
 import { useStore, useCurrentUser, store, can, type Priority, type TaskStatus } from "@/lib/mock-store";
 import { StatusBadge, PriorityBadge } from "@/components/StatusBadge";
 import { useEffect } from "react";
@@ -45,11 +45,8 @@ function TasksPage() {
   }, [user]);
 
   // ✅ YANG BARU (fix type mismatch)
-const userName = (id: string | number) =>
+const userName = (id?: string | number) =>
   users.find((u) => String(u.id) === String(id))?.name ?? "—";
-
-const userRole = (id: string | number) =>
-  users.find((u) => String(u.id) === String(id))?.role ?? "";
 
   const [assignedTo, setAssignedTo] = useState<string>("");
 
@@ -64,22 +61,30 @@ const userRole = (id: string | number) =>
  const filtered = useMemo(() => {
   return storeTasks
     .filter((t) => {
-      // default task tetap tampil
+      if (user.role === "admin") return true; // ✅ Admin sees EVERYTHING
       if (t.isDefault) return true;
 
-      // semua role bisa lihat task yg:
-      return (
-        String(t.assignedTo) === String(user.id) || // ditugaskan ke dia
-        String(t.createdBy) === String(user.id)     // dia yg buat
-      );
+      const isAssignedToMe = String(t.assignedTo) === String(user.id);
+      const isCreatedByMe = String(t.createdBy) === String(user.id);
+
+      return isAssignedToMe || isCreatedByMe;
     })
     .filter((t) => {
-        const realStatus = store.getUserTaskStatus(t.id, user.id);
-        return status === "all" ? true : realStatus === status;
-      })
+  const targetUserId =
+    user.role === "admin"
+      ? (t.assignedTo ?? "") // admin lihat status user yang ditugaskan
+      : user.id;
+
+  const realStatus = store.getUserTaskStatus(t.id, targetUserId);
+
+  return status === "all" ? true : realStatus === status;
+})
       .filter((t) => (q ? t.title.toLowerCase().includes(q.toLowerCase()) : true))
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }, [storeTasks, status, q, user]);
+
+  console.log("TASKS:", storeTasks);
+console.log("CURRENT USER:", user.id);
 
   return (
     <div className="space-y-6">
@@ -142,7 +147,10 @@ const userRole = (id: string | number) =>
                 const overdue =
                   realStatus !== "done" &&
                   t.deadline &&
-                  new Date(t.deadline) < new Date();
+                  (() => {
+                    const d = parseDate(t.deadline);
+                    return d ? d < new Date() : false;
+                  })();
                 return (
                   <TableRow key={`task-row-${t.id}`} className="cursor-pointer">
                     <TableCell className="font-medium">
@@ -171,27 +179,36 @@ const userRole = (id: string | number) =>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                         {t.isDefault ? (
-                          <>
-                            <span>Seluruh Tim</span>
-                            <span className="text-[8px] bg-primary/10 px-1 ml-1 rounded">
-                              HR & STAFF
-                            </span>
-                          </>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Penerima:</span>
+                              <span className="text-[10px] font-semibold uppercase">Seluruh Tim (HR & STAFF)</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Pengirim:</span>
+                              <span className="text-[10px] font-semibold uppercase">{userName(t.createdBy)}</span>
+                            </div>
+                          </div>
                         ) : (
-                          <div className="flex flex-col">
-                            <span className="font-medium">
-                              {t.assignedTo
-  ? userName(t.assignedTo)
-  : "Belum ditentukan"}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              dari {userRole(t.createdBy).toUpperCase()}
-                            </span>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Penerima:</span>
+                              <span className="text-[10px] font-semibold uppercase">
+                                {t.assignedTo ? userName(t.assignedTo) : "Belum ditentukan"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Pengirim:</span>
+                              <span className="text-[10px] font-semibold uppercase">{userName(t.createdBy)}</span>
+                            </div>
                           </div>
                         )}
                       </TableCell>
                     <TableCell className={overdue ? "text-destructive font-medium" : "text-muted-foreground"}>
-                      {t.deadline ? format(new Date(t.deadline), "dd MMM yyyy") : "—"}
+                      {(() => {
+                        const d = parseDate(t.deadline);
+                        return d ? format(d, "dd MMM yyyy") : "—";
+                      })()}
                     </TableCell>
                     <TableCell><PriorityBadge priority={t.priority} /></TableCell>
                     <TableCell>
@@ -245,7 +262,10 @@ const userRole = (id: string | number) =>
             const overdue =
               realStatus !== "done" &&
               t.deadline &&
-              new Date(t.deadline) < new Date();
+              (() => {
+                const d = parseDate(t.deadline);
+                return d ? d < new Date() : false;
+              })();
             return (
               <Link
                 key={`task-card-${t.id}`}
@@ -259,27 +279,19 @@ const userRole = (id: string | number) =>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-semibold text-foreground truncate">{t.title}</div>
-                    <div className="mt-1 text-xs text-muted-foreground flex items-center gap-1.5">
-                      {t.isDefault ? (
-                        <>
-                          <span>Assignee: Seluruh Tim</span>
-                          <span className="text-[8px] bg-primary/10 px-1 py-0 rounded text-primary font-bold uppercase tracking-wider">
-                            HR & STAFF
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Assignee: {t.assignedTo
-  ? userName(t.assignedTo)
-  : "Belum ditentukan"}</span>
-                          <span className="text-[8px] bg-muted px-1 py-0 rounded font-bold uppercase tracking-wider">
-                            {userRole(t.assignedTo ?? "")}
-                          </span>
-                          <span className="ml-1 text-[10px] text-muted-foreground">
-                            · dari {userRole(t.createdBy).toUpperCase()}
-                          </span>
-                        </>
-                      )}
+                    <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Penerima:</span>
+                        <span className="text-[10px] font-semibold uppercase">
+                          {t.isDefault ? "Seluruh Tim (HR & STAFF)" : userName(t.assignedTo)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Pengirim:</span>
+                        <span className="text-[10px] font-semibold uppercase">
+                          {userName(t.createdBy)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   {user.role === "admin" && t.isDefault ? (
@@ -295,7 +307,10 @@ const userRole = (id: string | number) =>
                   <div className="flex items-center gap-2">
                     <PriorityBadge priority={t.priority} />
                     <div className={cn("text-xs", overdue ? "font-bold text-destructive" : "text-muted-foreground")}>
-                      {format(new Date(t.deadline), "dd MMM")}
+                      {(() => {
+                        const d = parseDate(t.deadline);
+                        return d ? format(d, "dd MMM") : "—";
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -347,22 +362,23 @@ function CreateTaskDialog() {
   console.log("ASSIGNED TO:", assignedTo);
   console.log("USERS:", users);
 
-  if (!user || !title.trim() || !assignedTo) {
-    alert("Assign user dulu!");
-    return;
-  }
+  if (!user) return null;
 
-  store.createTask({
-    title: title.trim(),
-    description: description.trim(),
-    createdBy: user.id,
-    assignedTo,
-    deadline: new Date(deadline)
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " "),
-    priority,
-  });
+  if (!assignedTo) {
+  alert("Assign user dulu!");
+  return;
+}
+
+store.createTask({
+  title: title.trim(),
+  description: description.trim(),
+  createdBy: user.id,
+  assignedTo: String(assignedTo), // 🔥 pastikan string
+  deadline: deadline,
+  priority,
+});
+console.log("ASSIGNED TO FIX:", assignedTo);
+
     setOpen(false);
     setTitle(""); setDescription("");
   };

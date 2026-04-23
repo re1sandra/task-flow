@@ -45,8 +45,8 @@ export const Route = createRootRoute({
       },
       {
         rel: "icon",
-        href: "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
-      },
+        href: "/favicon.png",
+      },  
     ],
   }),
   shellComponent: RootShell,

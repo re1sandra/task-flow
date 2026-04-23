@@ -26,9 +26,9 @@ function ReportPage() {
   const highPriorityDone = tasks.filter(t => t.priority === "high" && t.status === "done").length;
   const highPriorityRate = highPriority > 0 ? Math.round((highPriorityDone / highPriority) * 100) : 0;
 
-  const staffUsers = users.filter(u => u.role === "staff");
+  const teamUsers = users.filter(u => u.role !== "admin");
   
-  const performanceData = staffUsers.map(u => {
+  const performanceData = teamUsers.map(u => {
     const userTasks = tasks.filter(t => t.assignedTo === u.id);
     const done = userTasks.filter(t => t.status === "done").length;
     const rate = userTasks.length > 0 ? Math.round((done / userTasks.length) * 100) : 0;
@@ -52,7 +52,7 @@ function ReportPage() {
         <StatsCard label="Total Tugas" value={totalTasks} icon={BarChart3} color="text-primary" />
         <StatsCard label="Tingkat Selesai" value={`${completionRate}%`} icon={CheckCircle2} color="text-success" />
         <StatsCard label="Prioritas Tinggi" value={highPriority} icon={TrendingUp} color="text-destructive" />
-        <StatsCard label="Total Staff" value={staffUsers.length} icon={Users} color="text-info" />
+        <StatsCard label="Total Tim" value={teamUsers.length} icon={Users} color="text-info" />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -119,7 +119,7 @@ function ReportPage() {
   );
 }
 
-function StatsCard({ label, value, icon: Icon, color }: { label: string, value: string | number, icon: any, color: string }) {
+function StatsCard({ label, value, icon: Icon, color }: { label: string, value: string | number, icon?: any, color: string }) {
   return (
     <Card className="p-5 shadow-(--shadow-card)">
       <div className="flex items-center justify-between">

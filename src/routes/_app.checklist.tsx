@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useStore, store, useCurrentUser, can } from "@/lib/mock-store";
 import { cn } from "@/lib/utils";
+import { type User } from "@/lib/mock-store";
 
 export const Route = createFileRoute("/_app/checklist")({
   head: () => ({ meta: [{ title: "Checklist — TaskControl" }] }),
@@ -22,6 +23,7 @@ function ChecklistPage() {
   const user = useCurrentUser();
   const checklists = useStore((s) => s.checklists || []);
   const tasks = useStore((s) => s.tasks || []);
+  const users = useStore((s) => s.users || []);
 
   if (!user) return null; // Handle undefined user case
 
@@ -48,6 +50,84 @@ function ChecklistPage() {
         {can.manageUsers(user.role) && <CreateChecklistDialog />}
       </div>
 
+{/* 🔥 Monitoring Checklist Tugas Tim (DARI DASHBOARD PINDAH KE SINI) */}
+{user.role === "admin" && (
+  <Card className="p-5 shadow-(--shadow-card) border-primary/20 bg-primary/5">
+    <h2 className="mb-4 text-base font-semibold text-primary">
+      Monitoring Checklist Tugas Tim
+    </h2>
+
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {users
+        .filter((u: User) => u.role !== "admin")
+        .map((u: User) => {
+          const userTasks = tasks.filter(
+            (t) =>
+              String(t.assignedTo) === String(u.id) && !t.isDefault
+          );
+
+          const done = userTasks.filter(
+            (t) =>
+              store.getUserTaskStatus(t.id, String(u.id)) === "done"
+          ).length;
+
+          return (
+            <div
+              key={u.id}
+              className="bg-card rounded-lg p-3 border shadow-sm"
+            >
+              <div className="flex items-center justify-between mb-2 border-b pb-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="font-bold text-sm truncate">
+                    {u.name}
+                  </div>
+                  <Badge className="text-[9px] h-4 uppercase px-1">
+                    {u.role}
+                  </Badge>
+                </div>
+
+                <Badge className="text-[9px] h-4">
+                  {done}/{userTasks.length}
+                </Badge>
+              </div>
+
+              <div className="space-y-1.5 pt-1.5 max-h-40 overflow-y-auto">
+                {userTasks.map((t) => {
+                  const status = store.getUserTaskStatus(
+                    t.id,
+                    String(u.id)
+                  );
+
+                  return (
+                    <div
+                      key={t.id}
+                      className="flex items-center gap-2 text-[11px]"
+                    >
+                      {status === "done" ? (
+                        <CheckCircle2 className="h-3 w-3 text-success" />
+                      ) : (
+                        <Circle className="h-3 w-3 text-muted-foreground" />
+                      )}
+
+                      <span
+                        className={cn(
+                          "truncate",
+                          status === "done" &&
+                            "line-through text-muted-foreground"
+                        )}
+                      >
+                        {t.title}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  </Card>
+)}
       <div className="grid gap-6 md:grid-cols-2">
         {/* Task-based Checklist (Auto-synced) */}
         {taskItems.length > 0 && (
@@ -130,7 +210,7 @@ function ChecklistPage() {
         ))}
         {checklists.length === 0 && (
           <div className="col-span-full py-20 text-center">
-            <p className="text-muted-foreground text-sm">Belum ada checklist.</p>
+            
           </div>
         )}
       </div>

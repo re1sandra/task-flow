@@ -379,32 +379,104 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
 
     console.log("✅ Masuk DB:", data);
 
-    // 🔥 Tambahkan notifikasi lokal agar muncul di UI
-    if (input.assignedTo) {
-      const notification: Notification = {
-        id: `n${Date.now()}`,
-        userId: String(input.assignedTo),
-        title: "Tugas Baru",
-        message: `Anda mendapat tugas baru: ${input.title}`,
-        link: `/tasks/${data.id}`,
-        isRead: false,
-        timestamp: new Date().toISOString(),
-      };
+    // 🔥 ambil semua user dari state
+const allUsers = store.getState().users;
 
-      setState((s) => ({
-        ...s,
-        notifications: [notification, ...s.notifications],
-      }));
-    }
+// 🔥 cari pembuat task
+const creator = allUsers.find(u => String(u.id) === String(input.createdBy));
 
-    // 🔥 ambil ulang dari database
-    store.fetchTasks();
-    store.addLog(String(data.id), input.createdBy, "created");
+// 🔥 tentukan target penerima notif
+let targetUsers: User[] = [];
+
+// ✅ CASE 1: task assign ke 1 orang
+if (input.assignedTo) {
+  const target = allUsers.find(u => String(u.id) === String(input.assignedTo));
+  if (target) targetUsers.push(target);
+}
+
+// ✅ CASE 2: broadcast (tidak ada assignedTo)
+else {
+  targetUsers = allUsers.filter(u => String(u.id) !== String(input.createdBy));
+}
+
+// 🔥 bikin notif untuk semua target di BACKEND
+for (const u of targetUsers) {
+  await store.addNotification({
+    userId: String(u.id),
+    title: "Tugas Baru",
+    message: `${creator?.name || "Seseorang"} (${creator?.role.toUpperCase() || "USER"}) memberikan tugas: ${input.title}`,
+    link: `/tasks/${data.id}`,
+  });
+}
+
+// 🔥 ambil ulang dari database
+store.fetchTasks();
+store.addLog(String(data.id), input.createdBy, "created");
+store.fetchNotifications(); // Update current user's notifications if they are one of the targets (broadcast)
 
   } catch (err) {
     console.error("❌ Gagal:", err);
   }
 },
+
+  fetchNotifications: async () => {
+    try {
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      if (!user.id) return;
+
+      const res = await fetch(`http://localhost:3000/notifications/${user.id}`);
+      const data = await res.json();
+      setState((s) => ({
+        ...s,
+        notifications: data.map((n: any) => ({
+          id: String(n.id),
+          userId: String(n.user_id),
+          title: n.title,
+          message: n.message,
+          link: n.link,
+          isRead: !!n.is_read,
+          timestamp: n.timestamp,
+        })),
+      }));
+    } catch (err) {
+      console.error("❌ Gagal fetch notifications:", err);
+    }
+  },
+
+  addNotification: async (notif: Omit<Notification, "id" | "isRead" | "timestamp">) => {
+    try {
+      await fetch("http://localhost:3000/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: notif.userId,
+          title: notif.title,
+          message: notif.message,
+          link: notif.link,
+        }),
+      });
+      // Kita tidak fetch ulang di sini karena targetnya user lain.
+      // User lain akan fetch via polling.
+    } catch (err) {
+      console.error("❌ Gagal add notification:", err);
+    }
+  },
+
+  markNotificationRead: async (id: string) => {
+    try {
+      await fetch(`http://localhost:3000/notifications/${id}/read`, {
+        method: "PUT",
+      });
+      setState((s) => ({
+        ...s,
+        notifications: s.notifications.map((n) =>
+          n.id === id ? { ...n, isRead: true } : n
+        ),
+      }));
+    } catch (err) {
+      console.error("❌ Gagal mark notification read:", err);
+    }
+  },
 
   markRead: async (taskId: string, userId: string) => {
   try {
@@ -542,6 +614,32 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
 
       const data = await res.json();
 
+      // 🔥 AMBIL USER DARI STATE
+      const allUsers = store.getState().users;
+      const creator = allUsers.find(u => String(u.id) === String(userId));
+
+      // 🔥 TARGET BROADCAST: HR & STAFF (kecuali pembuat jika dia HR/Staff)
+      const targets = allUsers.filter(u => 
+        (u.role === "hrd" || u.role === "staff") && 
+        String(u.id) !== String(userId)
+      );
+
+      // 🔥 BIKIN NOTIF
+      const notifications: Notification[] = targets.map((u) => ({
+        id: `n-broadcast-${Date.now()}-${u.id}`,
+        userId: String(u.id),
+        title: "Tugas Baru (Broadcast)",
+        message: `${creator?.name || "Admin"} (${creator?.role.toUpperCase() || "ADMIN"}) mengirim tugas default: ${title}`,
+        link: `/tasks`, // Dashboard/Tugas default
+        isRead: false,
+        timestamp: new Date().toISOString(),
+      }));
+
+      setState((s) => ({
+        ...s,
+        notifications: [...notifications, ...s.notifications],
+      }));
+
       // refresh data
       store.fetchTasks();
       store.addLog(String(data.id), userId, "created");
@@ -549,6 +647,7 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
       console.error("❌ Gagal:", err);
     }
   },
+
   deleteTask: async (id: string) => {
     try {
       const res = await fetch(`http://localhost:3000/tasks/${id}`, {
@@ -563,6 +662,7 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
       console.error("❌ Gagal deleteTask:", err);
     }
   },
+
   logout: () => {
     localStorage.removeItem("user");
     localStorage.removeItem("token");
@@ -589,12 +689,6 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
     setState((s) => ({
       ...s,
       users: s.users.map((u) => (u.id === id ? { ...u, name, avatar } : u)),
-    }));
-  },
-  markNotificationRead: (id: string) => {
-    setState((s) => ({
-      ...s,
-      notifications: s.notifications.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
     }));
   },
 };

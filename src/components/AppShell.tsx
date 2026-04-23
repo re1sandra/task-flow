@@ -84,12 +84,24 @@ export function AppShell() {
         await Promise.all([
           store.fetchTasks(),
           store.fetchChecklists(),
-          store.fetchLogs()
+          store.fetchLogs(),
+          store.fetchNotifications() // ✅ Fetch notifications on init
         ]);
       }
       setLoadingApp(false);
     };
     init();
+
+    // ✅ Tambahkan polling setiap 3 detik agar notifikasi "langsung masuk"
+     const poll = setInterval(() => {
+       const savedUser = localStorage.getItem("user");
+       if (savedUser) {
+         store.fetchNotifications();
+         store.fetchTasks();
+       }
+     }, 3000);
+
+    return () => clearInterval(poll);
   }, []);
 
   if (loadingApp) return null;
@@ -125,7 +137,7 @@ export function AppShell() {
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary shadow-sm">
             <CheckSquare className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="text-sm font-bold tracking-tight text-foreground">TaskFlow</span>
+          <span className="text-sm font-bold tracking-tight text-foreground">TaskControl</span>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
@@ -177,6 +189,15 @@ export function AppShell() {
             </PopoverContent>
           </Popover>
           
+          {/* User Info (Name + Role) */}
+<div className="hidden sm:flex flex-col text-right leading-tight mr-1">
+  <span className="text-xs font-semibold text-foreground truncate max-w-[120px]">
+    {user.name}
+  </span>
+  <span className="text-[10px] uppercase text-muted-foreground font-bold tracking-wide">
+    {user.role}
+  </span>
+</div>
           {/* User selection removed for production-like feel */}
           
           {/* Profile Sheet */}

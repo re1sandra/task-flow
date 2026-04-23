@@ -204,17 +204,17 @@ app.get("/tasks", (req, res) => {
 
     const query = `
       SELECT 
-        t.id, t.title, t.description, t.created_by, t.is_default, t.priority, t.deadline, t.created_at,
+        t.id, t.title, t.description, t.created_by, t.assigned_to, t.is_default, t.priority, t.deadline, t.created_at,
         IFNULL(ta.status, 'unread') as status,
         IFNULL(ta.progress, 0) as progress,
         ta.read_at,
         ? as user_id
       FROM tasks t
       LEFT JOIN task_assignments ta ON t.id = ta.task_id AND ta.user_id = ?
-      WHERE t.is_default = 1 OR (t.is_default = 0 AND ta.user_id = ?)
+      WHERE t.is_default = 1 OR (t.is_default = 0 AND (ta.user_id = ? OR t.created_by = ?))
       ORDER BY t.created_at DESC
     `;
-    db.query(query, [userId, userId, userId], (err, result) => {
+    db.query(query, [userId, userId, userId, userId], (err, result) => {
       if (err) return res.status(500).json({ message: "DB error" });
       res.json(result);
     });
@@ -371,6 +371,64 @@ app.post("/logs", (req, res) => {
     (err) => {
       if (err) return res.status(500).json({ message: "Gagal simpan log" });
       res.json({ message: "Log saved ✅" });
+    }
+  );
+});
+
+/* ================= NOTIFICATIONS ================= */
+app.get("/notifications/:userId", (req, res) => {
+  const userId = req.params.userId;
+  db.query(
+    "SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50",
+    [userId],
+    (err, results) => {
+      if (err) {
+        // Jika tabel belum ada, kita buatkan dulu
+        if (err.code === 'ER_NO_SUCH_TABLE') {
+          db.query(`
+            CREATE TABLE IF NOT EXISTS notifications (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              user_id INT NOT NULL,
+              title VARCHAR(255) NOT NULL,
+              message TEXT NOT NULL,
+              link VARCHAR(255),
+              is_read TINYINT(1) DEFAULT 0,
+              timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `, (err2) => {
+            if (err2) return res.status(500).json({ message: "Gagal buat tabel notif" });
+            return res.json([]);
+          });
+        } else {
+          return res.status(500).json({ message: "DB error" });
+        }
+      } else {
+        res.json(results);
+      }
+    }
+  );
+});
+
+app.post("/notifications", (req, res) => {
+  const { user_id, title, message, link } = req.body;
+  db.query(
+    "INSERT INTO notifications (user_id, title, message, link, is_read) VALUES (?, ?, ?, ?, 0)",
+    [user_id, title, message, link],
+    (err) => {
+      if (err) return res.status(500).json({ message: "Gagal simpan notif" });
+      res.json({ message: "Notification saved ✅" });
+    }
+  );
+});
+
+app.put("/notifications/:id/read", (req, res) => {
+  const id = req.params.id;
+  db.query(
+    "UPDATE notifications SET is_read = 1 WHERE id = ?",
+    [id],
+    (err) => {
+      if (err) return res.status(500).json({ message: "Gagal update notif" });
+      res.json({ message: "Notification marked as read ✅" });
     }
   );
 });

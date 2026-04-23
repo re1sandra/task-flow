@@ -82,15 +82,6 @@ function Login() {
     }
   };
 
-  const handleSelectDemo = (userId: string) => {
-    const selected = allUsers.find(u => String(u.id) === userId);
-    if (selected) {
-      setEmail(selected.email);
-      setPassword("password123"); // Assuming default password for demo
-      setError(null);
-    }
-  };
-
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       <div className="hidden flex-col justify-between p-12 text-primary-foreground lg:flex" style={{ background: "var(--gradient-primary)" }}>
@@ -165,33 +156,6 @@ function Login() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Coba Akun Demo</Label>
-              <Select onValueChange={handleSelectDemo}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Pilih Role Demo" />
-                </SelectTrigger>
-                <SelectContent>
-                  {allUsers
-                    .reduce((acc: any[], current) => {
-                      const x = acc.find(item => String(item.id) === String(current.id));
-                      if (!x) {
-                        return acc.concat([current]);
-                      } else {
-                        return acc;
-                      }
-                    }, [])
-                    .map((u) => (
-                      <SelectItem key={`demo-user-${u.id}`} value={String(u.id)}>
-                        {u.name} ({u.role.toUpperCase()})
-                      </SelectItem>
-                  ))}
-                  {allUsers.length === 0 && (
-                    <SelectItem value="none" disabled>Memuat data...</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={loading}>
               {loading ? "Memproses..." : "Masuk"}
