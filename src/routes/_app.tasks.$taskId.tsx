@@ -85,6 +85,20 @@ useEffect(() => {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
+          <Card className="bg-primary/5 border-primary/20 p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-1 bg-primary/10 p-1.5 rounded-full">
+                <Eye className="h-4 w-4 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-primary">Tips Pembaruan Status:</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Anda juga bisa mendapatkan status <span className="font-bold text-orange-600">"Sedang Dikerjakan"</span> atau <span className="font-bold text-green-600">"Selesai"</span> secara otomatis dengan mencentang item pekerjaan di menu <span className="font-bold text-primary underline">Checklist</span> pada navigasi sebelah kiri.
+                </p>
+              </div>
+            </div>
+          </Card>
+
           <Card 
             className={cn(
               "p-6 shadow-(--shadow-card) transition-all",
@@ -92,7 +106,7 @@ useEffect(() => {
             )}
             onClick={() => {
               if ((myStatus === "read" || myStatus === "unread") && !(user.role === "admin" && task.isDefault)) {
-                store.updateProgress(task.id, user.id, 10);
+                store.markInProgress(task.id, user.id);
               }
             }}
           >
@@ -105,8 +119,13 @@ useEffect(() => {
                     {task.title}
                   </h1>
                   {(myStatus === "read" || myStatus === "unread") && !(user.role === "admin" && task.isDefault) && (
-                    <span className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded-full font-bold animate-pulse">
-                      KLIK UNTUK MULAI
+                    <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold animate-pulse uppercase tracking-wider">
+                      KLIK UNTUK MULAI KERJAKAN
+                    </span>
+                  )}
+                  {myStatus === "in_progress" && (
+                    <span className="text-[10px] bg-orange-500 text-white px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                      SEDANG DIKERJAKAN
                     </span>
                   )}
                 </div>
@@ -188,6 +207,53 @@ useEffect(() => {
               <p className="mt-3 text-xs text-muted-foreground">Hanya assignee atau Admin/HR yang dapat mengubah progress.</p>
             )}
           </Card>
+
+          {user.role === "admin" && (task.isDefault || task.assignedRole || task.assignedTo?.includes(',')) && (
+            <Card className="p-6 shadow-(--shadow-card) border-primary/20 bg-primary/5">
+              <h2 className="mb-4 text-base font-semibold text-primary flex items-center gap-2">
+                <Eye className="h-4 w-4" />
+                Monitoring Progress Tim
+              </h2>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {users
+                  .filter(u => {
+                    if (task.isDefault) return u.role === 'hrd' || u.role === 'staff';
+                    if (task.assignedRole) return u.role === task.assignedRole;
+                    if (task.assignedTo?.includes(',')) {
+                      return task.assignedTo.split(',').includes(String(u.id));
+                    }
+                    return false;
+                  })
+                  .map(u => {
+                    const uStatus = store.getUserTaskStatus(task.id, u.id);
+                    const uProgress = store.getUserTaskProgress(task.id, u.id);
+                    return (
+                      <div key={`team-monitor-${u.id}`} className="flex items-center justify-between bg-card p-3 rounded-lg border shadow-sm">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-foreground">{u.name}</span>
+                          <span className="text-[10px] uppercase font-medium text-muted-foreground">{u.role}</span>
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5">
+                          <StatusBadge status={uStatus} className="h-4 text-[8px] px-1.5" />
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-1 bg-muted rounded-full overflow-hidden">
+                              <div 
+                                className={cn(
+                                  "h-full transition-all duration-500",
+                                  uStatus === 'done' ? "bg-green-500" : uStatus === 'in_progress' ? "bg-orange-500" : "bg-primary"
+                                )} 
+                                style={{ width: `${uProgress}%` }} 
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold tabular-nums">{uProgress}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </Card>
+          )}
         </div>
 
         <Card className="p-6 shadow-(--shadow-card) h-fit">
@@ -244,7 +310,7 @@ function actionLabel(a: string) {
     created: "membuat tugas",
     read: "membaca tugas",
     updated: "memperbarui tugas",
-    progress: "update progress",
+    progress: "sedang mengerjakan tugas",
     done: "menyelesaikan tugas",
     assigned: "ditugaskan tugas",
   };

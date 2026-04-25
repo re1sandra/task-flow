@@ -92,6 +92,8 @@ app.post("/tasks", (req, res) => {
     description,
     created_by,
     assigned_to,
+    assigned_role,
+    assigned_user_ids, // New: for mixed team
     priority,
     deadline,
   } = req.body;
@@ -104,10 +106,10 @@ app.post("/tasks", (req, res) => {
 
   db.query(
     `INSERT INTO tasks 
-    (title, description, created_by, assigned_to, is_default, priority, deadline, status, progress) 
-    VALUES (?, ?, ?, ?, 0, ?, ?, 'unread', 0)`,
+    (title, description, created_by, assigned_to, assigned_role, is_default, priority, deadline, status, progress) 
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'unread', 0)`,
 
-    [title, description, created_by, assigned_to || null, priority, formattedDeadline],
+    [title, description, created_by, assigned_to || null, assigned_role || null, priority, formattedDeadline],
 
     (err, result) => {
       if (err) {
@@ -117,7 +119,44 @@ app.post("/tasks", (req, res) => {
 
       const taskId = result.insertId;
 
-      if (assigned_to) {
+      if (assigned_user_ids && Array.isArray(assigned_user_ids) && assigned_user_ids.length > 0) {
+        // Mixed Team Assignment: Update task to store user IDs in assigned_to
+        const userIdsStr = assigned_user_ids.join(',');
+        db.query("UPDATE tasks SET assigned_to = ? WHERE id = ?", [userIdsStr, taskId]);
+
+        const values = assigned_user_ids.map(uid => [taskId, uid, 'unread', 0]);
+        db.query(
+          "INSERT INTO task_assignments (task_id, user_id, status, progress) VALUES ?",
+          [values],
+          (errMixed) => {
+            if (errMixed) return res.status(500).json({ message: "Gagal assign task campuran" });
+            res.json({ id: taskId, message: "Task tim campuran berhasil dibuat ✅" });
+          }
+        );
+      } else if (assigned_role) {
+        // Assign to all users with this role
+        db.query(
+          "SELECT id FROM users WHERE role = ?",
+          [assigned_role],
+          (errRole, users) => {
+            if (errRole) return res.status(500).json({ message: "Gagal ambil user tim" });
+            
+            if (users.length > 0) {
+              const values = users.map(u => [taskId, u.id, 'unread', 0]);
+              db.query(
+                "INSERT INTO task_assignments (task_id, user_id, status, progress) VALUES ?",
+                [values],
+                (errAssign) => {
+                  if (errAssign) return res.status(500).json({ message: "Gagal assign task tim" });
+                  res.json({ id: taskId, message: `Task tim ${assigned_role} berhasil dibuat ✅` });
+                }
+              );
+            } else {
+              res.json({ id: taskId, message: "Task dibuat tapi tidak ada user di tim tersebut" });
+            }
+          }
+        );
+      } else if (assigned_to) {
         db.query(
           `INSERT INTO task_assignments 
           (task_id, user_id, status, progress) 
@@ -190,21 +229,24 @@ app.get("/tasks", (req, res) => {
     // Admin sees all tasks + their assignments
     const query = `
       SELECT 
-        t.id, t.title, t.description, t.created_by, t.assigned_to, t.is_default, t.priority, t.deadline, t.created_at,
+        t.id, t.title, t.description, t.created_by, t.assigned_to, t.assigned_role, t.is_default, t.priority, t.deadline, t.created_at,
         ta.user_id, ta.status, ta.progress, ta.read_at
       FROM tasks t
       LEFT JOIN task_assignments ta ON t.id = ta.task_id
       ORDER BY t.created_at DESC
     `;
     db.query(query, (err, result) => {
-      if (err) return res.status(500).json({ message: "DB error" });
+      if (err) {
+        console.error("SQL Error (Admin GET tasks):", err);
+        return res.status(500).json({ message: "DB error: " + err.message });
+      }
       res.json(result);
     });
   } else {
 
     const query = `
       SELECT 
-        t.id, t.title, t.description, t.created_by, t.assigned_to, t.is_default, t.priority, t.deadline, t.created_at,
+        t.id, t.title, t.description, t.created_by, t.assigned_to, t.assigned_role, t.is_default, t.priority, t.deadline, t.created_at,
         IFNULL(ta.status, 'unread') as status,
         IFNULL(ta.progress, 0) as progress,
         ta.read_at,
@@ -215,7 +257,10 @@ app.get("/tasks", (req, res) => {
       ORDER BY t.created_at DESC
     `;
     db.query(query, [userId, userId, userId, userId], (err, result) => {
-      if (err) return res.status(500).json({ message: "DB error" });
+      if (err) {
+        console.error("SQL Error (User GET tasks):", err);
+        return res.status(500).json({ message: "DB error: " + err.message });
+      }
       res.json(result);
     });
   }
@@ -434,6 +479,36 @@ app.put("/notifications/:id/read", (req, res) => {
 });
 
 /* ================= RUN SERVER ================= */
+// Pastikan kolom assigned_role ada di tabel tasks
+db.query("SHOW COLUMNS FROM tasks LIKE 'assigned_role'", (err, result) => {
+  if (result && result.length === 0) {
+    db.query("ALTER TABLE tasks ADD COLUMN assigned_role VARCHAR(50) AFTER assigned_to", (err) => {
+      if (err) console.error("Gagal tambah kolom assigned_role:", err);
+      else console.log("Kolom assigned_role berhasil ditambahkan ✅");
+    });
+  }
+});
+
+// Pastikan kolom read_at ada di tabel task_assignments
+db.query("SHOW COLUMNS FROM task_assignments LIKE 'read_at'", (err, result) => {
+  if (result && result.length === 0) {
+    db.query("ALTER TABLE task_assignments ADD COLUMN read_at TIMESTAMP NULL", (err) => {
+      if (err) console.error("Gagal tambah kolom read_at:", err);
+      else console.log("Kolom read_at berhasil ditambahkan ✅");
+    });
+  }
+});
+
+// Pastikan kolom status dan progress ada di tabel tasks
+db.query("SHOW COLUMNS FROM tasks LIKE 'status'", (err, result) => {
+  if (result && result.length === 0) {
+    db.query("ALTER TABLE tasks ADD COLUMN status VARCHAR(20) DEFAULT 'unread', ADD COLUMN progress INT DEFAULT 0", (err) => {
+      if (err) console.error("Gagal tambah kolom status/progress di tasks:", err);
+      else console.log("Kolom status & progress berhasil ditambahkan ke tasks ✅");
+    });
+  }
+});
+
 app.listen(3000, () => {
   console.log("Server jalan di http://localhost:3000 🚀");
 });

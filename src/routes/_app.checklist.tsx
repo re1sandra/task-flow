@@ -29,10 +29,17 @@ function ChecklistPage() {
 
   const taskItems = user.role !== "admin" 
   ? tasks
-      .filter((t) => t.assignedTo === user.id && !t.isDefault)
+      .filter((t) => {
+        const isAssignedToMe = String(t.assignedTo) === String(user.id);
+        const isAssignedToMyRole = t.assignedRole === user.role;
+        const isPartOfMixedTeam = t.assignedTo?.includes(',') && t.assignedTo.split(',').includes(String(user.id));
+        
+        // Exclude default tasks as per request
+        return isAssignedToMe || isAssignedToMyRole || isPartOfMixedTeam;
+      })
       .map((t) => ({
         id: t.id,
-        title: `[TUGAS] ${t.title}`,
+        title: t.assignedRole ? `[TIM] ${t.title}` : t.assignedTo?.includes(',') ? `[CAMPURAN] ${t.title}` : `[TUGAS] ${t.title}`,
         completed: store.getUserTaskStatus(t.id, user.id) === "done",
         isTask: true,
       }))
@@ -63,7 +70,9 @@ function ChecklistPage() {
         .map((u: User) => {
           const userTasks = tasks.filter(
             (t) =>
-              String(t.assignedTo) === String(u.id) && !t.isDefault
+              (String(t.assignedTo) === String(u.id) || 
+              (t.assignedTo?.includes(',') && t.assignedTo.split(',').includes(String(u.id))) || // Mixed Team
+              t.assignedRole === u.role) && !t.isDefault
           );
 
           const done = userTasks.filter(
@@ -142,7 +151,7 @@ function ChecklistPage() {
                   <Checkbox
                     id={item.id}
                     checked={item.completed}
-                    onCheckedChange={() => store.updateProgress(item.id, user.id, 100)}
+                    onCheckedChange={(checked) => store.updateProgress(item.id, user.id, checked ? 100 : 0)}
                   />
                   <label
                     htmlFor={item.id}

@@ -27,6 +27,7 @@ export interface Task {
   status: TaskStatus;
   progress: number;
   assignedTo?: string;
+  assignedRole?: Role;
 }
 
 export interface ChecklistItem {
@@ -77,6 +78,8 @@ type CreateTaskInput = {
   description: string;
   createdBy: string;
   assignedTo?: string;
+  assignedRole?: Role;
+  assignedUserIds?: string[]; // New: for mixed team
   priority: Priority;
   deadline: string;
 };
@@ -220,6 +223,15 @@ export const store = {
     const res = await fetch(`http://localhost:3000/tasks?user_id=${user.id}&role=${user.role}`);
     const data = await res.json();
 
+    if (!res.ok) {
+      throw new Error(data.message || "Gagal fetch tasks");
+    }
+
+    if (!Array.isArray(data)) {
+      console.error("Data tasks bukan array:", data);
+      return;
+    }
+
     const uniqueTasks = user.role === 'admin' 
       ? data.reduce((acc: any[], curr: any) => {
           if (!acc.find(t => t.id === curr.id)) acc.push(curr);
@@ -234,6 +246,7 @@ export const store = {
       description: t.description,
       createdBy: String(t.created_by),
       assignedTo: t.assigned_to ? String(t.assigned_to) : undefined,
+      assignedRole: t.assigned_role as Role,
       isDefault: !!t.is_default,
       status: t.status,
       priority: t.priority,
@@ -356,7 +369,7 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
 },
 
   setCurrentUser: (id: string) => setState((s) => ({ ...s, currentUserId: id })),
-  createTask: async (input: Omit<Task, "id" | "createdAt" | "status" | "progress">) => {
+  createTask: async (input: CreateTaskInput) => {
   try {
     const res = await fetch("http://localhost:3000/tasks", {
       method: "POST",
@@ -368,6 +381,8 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
         description: input.description,
         created_by: input.createdBy,
         assigned_to: input.assignedTo ?? null,
+        assigned_role: input.assignedRole ?? null,
+        assigned_user_ids: input.assignedUserIds ?? null, // Mixed team support
         priority: input.priority,
         deadline: input.deadline,
       }),
@@ -380,34 +395,41 @@ getUserTaskProgress: (taskId: string, userId: string): number => {
     console.log("✅ Masuk DB:", data);
 
     // 🔥 ambil semua user dari state
-const allUsers = store.getState().users;
+    const allUsers = store.getState().users;
 
-// 🔥 cari pembuat task
-const creator = allUsers.find(u => String(u.id) === String(input.createdBy));
+    // 🔥 cari pembuat task
+    const creator = allUsers.find(u => String(u.id) === String(input.createdBy));
 
-// 🔥 tentukan target penerima notif
-let targetUsers: User[] = [];
+    // 🔥 tentukan target penerima notif
+    let targetUsers: User[] = [];
 
-// ✅ CASE 1: task assign ke 1 orang
-if (input.assignedTo) {
-  const target = allUsers.find(u => String(u.id) === String(input.assignedTo));
-  if (target) targetUsers.push(target);
-}
+    // ✅ CASE 0: task assign ke tim campuran (multi-user)
+    if (input.assignedUserIds && input.assignedUserIds.length > 0) {
+      targetUsers = allUsers.filter(u => input.assignedUserIds?.includes(String(u.id)) && String(u.id) !== String(input.createdBy));
+    }
+    // ✅ CASE 1: task assign ke tim (role)
+    else if (input.assignedRole) {
+      targetUsers = allUsers.filter(u => u.role === input.assignedRole && String(u.id) !== String(input.createdBy));
+    }
+    // ✅ CASE 2: task assign ke 1 orang
+    else if (input.assignedTo) {
+      const target = allUsers.find(u => String(u.id) === String(input.assignedTo));
+      if (target) targetUsers.push(target);
+    }
+    // ✅ CASE 3: broadcast (tidak ada assignedTo/assignedRole)
+    else {
+      targetUsers = allUsers.filter(u => String(u.id) !== String(input.createdBy));
+    }
 
-// ✅ CASE 2: broadcast (tidak ada assignedTo)
-else {
-  targetUsers = allUsers.filter(u => String(u.id) !== String(input.createdBy));
-}
-
-// 🔥 bikin notif untuk semua target di BACKEND
-for (const u of targetUsers) {
-  await store.addNotification({
-    userId: String(u.id),
-    title: "Tugas Baru",
-    message: `${creator?.name || "Seseorang"} (${creator?.role.toUpperCase() || "USER"}) memberikan tugas: ${input.title}`,
-    link: `/tasks/${data.id}`,
-  });
-}
+    // 🔥 bikin notif untuk semua target di BACKEND
+    for (const u of targetUsers) {
+      await store.addNotification({
+        userId: String(u.id),
+        title: "Tugas Baru",
+        message: `${creator?.name || "Seseorang"} (${creator?.role.toUpperCase() || "USER"}) memberikan tugas${input.assignedRole ? " Tim " + input.assignedRole.toUpperCase() : ""}: ${input.title}`,
+        link: `/tasks/${data.id}`,
+      });
+    }
 
 // 🔥 ambil ulang dari database
 store.fetchTasks();
@@ -495,6 +517,25 @@ store.fetchNotifications(); // Update current user's notifications if they are o
 
   } catch (err) {
     console.error("❌ Gagal markRead:", err);
+  }
+},
+markInProgress: async (taskId: string, userId: string) => {
+  try {
+    await fetch(`http://localhost:3000/tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        status: "in_progress",
+        progress: 5, // Start with 5% progress
+      }),
+    });
+
+    store.fetchTasks();
+    await store.addLog(taskId, userId, "progress", "5%");
+
+  } catch (err) {
+    console.error("❌ Gagal markInProgress:", err);
   }
 },
   updateProgress: async (taskId: string, userId: string, progress: number) => {

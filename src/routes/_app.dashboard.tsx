@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
 import { ListTodo, CheckCircle2, Clock, AlertTriangle, Plus, ShieldCheck, Circle, CheckSquare, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
@@ -40,7 +40,7 @@ function Dashboard() {
   const [selectedDefaultTask, setSelectedDefaultTask] = useState<string | null>(null);
   const [selectedReadStatus, setSelectedReadStatus] = useState<TaskStatus | null>(null);
 
-  const [selectedStatKey, setSelectedStatKey] = useState<"today" | "done" | "notDone" | "overdue" | null>(null);
+  const [selectedStatKey, setSelectedStatKey] = useState<"today" | "done" | "inProgress" | "notDone" | null>(null);
 
   if (!user) return null; // Handle undefined user case
 
@@ -66,12 +66,19 @@ function Dashboard() {
 ).sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
 
   const visible = tasks.filter((t) => {
-    // Strictly exclude default tasks (broadcast) from statistics
+    // Exclude default tasks (broadcast) from statistics and main list as per latest request
     if (t.isDefault) return false;
 
     if (user.role === "admin") return true;
-    // For non-admin, show tasks assigned to them or created by them
-    return String(t.assignedTo) === String(user.id) || String(t.createdBy) === String(user.id);
+    
+    // For non-admin, show:
+    // 1. Tasks assigned to them specifically, their role, or their mixed team
+    if (t.assignedRole === user.role) return true;
+    if (t.assignedTo === user.id) return true;
+    if (t.assignedTo?.split(',').includes(String(user.id))) return true;
+    
+    // 2. Tasks created by them
+    return String(t.createdBy) === String(user.id);
   });
 
   const staffAndHr = users.filter(u => u.role !== "admin");
@@ -80,99 +87,148 @@ function Dashboard() {
   const getAdminStats = () => {
     let todayCount = 0;
     let doneCount = 0;
+    let inProgressCount = 0;
     let notDoneCount = 0;
-    let overdueCount = 0;
 
     const todayTasks: { task: any; user: User; status: TaskStatus }[] = [];
     const doneTasks: { task: any; user: User; status: TaskStatus }[] = [];
+    const inProgressTasks: { task: any; user: User; status: TaskStatus }[] = [];
     const notDoneTasks: { task: any; user: User; status: TaskStatus }[] = [];
-    const overdueTasks: { task: any; user: User; status: TaskStatus }[] = [];
 
-    // Filter to ONLY private tasks (isDefault === false)
-    // We strictly ignore default tasks (broadcast tasks) for stats as per instructions
-    const privateTasks = tasks.filter(t => !t.isDefault);
+    // Filter to tasks
+    tasks.forEach(t => {
+      // Determine which users are relevant for this task to check their individual status
+      const relevantUsers = users.filter(u => {
+        if (t.isDefault) return u.role === 'hrd' || u.role === 'staff';
+        if (t.assignedRole) return u.role === t.assignedRole;
+        if (t.assignedTo?.includes(',')) return t.assignedTo.split(',').includes(String(u.id));
+        if (t.assignedTo) return String(t.assignedTo) === String(u.id);
+        return false;
+      });
 
-    privateTasks.forEach(t => {
-      // For private tasks, check status for the assignee only
-      const assignee = users.find(u => String(u.id) === String(t.assignedTo));
-      if (assignee) {
-        const status = store.getUserTaskStatus(t.id, String(t.assignedTo));
+      relevantUsers.forEach(u => {
+        const status = store.getUserTaskStatus(t.id, u.id);
         
+        // For "Today" count, we use task creation date
         if (isToday(t.createdAt)) {
+          // Avoid duplicate counting for "Today" if it's the same task but multiple users? 
+          // Usually stats are assignment-based for monitoring.
           todayCount++;
-          todayTasks.push({ task: t, user: assignee, status });
+          todayTasks.push({ task: t, user: u, status });
         }
 
         if (status === "done") {
           doneCount++;
-          doneTasks.push({ task: t, user: assignee, status });
+          doneTasks.push({ task: t, user: u, status });
+        } else if (status === "in_progress") {
+          inProgressCount++;
+          inProgressTasks.push({ task: t, user: u, status });
+          
+          // Exclude default tasks from "Not Done" stats as per request
+          if (!t.isDefault) {
+            notDoneCount++;
+            notDoneTasks.push({ task: t, user: u, status });
+          }
         } else {
-          notDoneCount++;
-          notDoneTasks.push({ task: t, user: assignee, status });
-          const d = parseDate(t.deadline);
-          if (d && d < new Date()) {
-            overdueCount++;
-            overdueTasks.push({ task: t, user: assignee, status });
+          // Exclude default tasks from "Not Done" stats as per request
+          if (!t.isDefault) {
+            notDoneCount++;
+            notDoneTasks.push({ task: t, user: u, status });
           }
         }
-      }
+      });
     });
 
     return {
-      todayCount, doneCount, notDoneCount, overdueCount,
-      todayTasks, doneTasks, notDoneTasks, overdueTasks
+      todayCount, doneCount, inProgressCount, notDoneCount,
+      todayTasks, doneTasks, inProgressTasks, notDoneTasks
     };
   };
 
   const adminStats = getAdminStats();
 
   const getMyStats = () => {
-    const today = new Date().toDateString();
-    const myToday = visible.filter((t) => isToday(t.createdAt)).length;
-    const myDone = visible.filter((t) => store.getUserTaskStatus(t.id, user.id) === "done").length;
-    const myNotDone = visible.filter((t) => store.getUserTaskStatus(t.id, user.id) !== "done").length;
-    const myOverdue = visible.filter((t) => t.deadline < new Date().toISOString() && store.getUserTaskStatus(t.id, user.id) !== "done").length;
-    return { myToday, myDone, myNotDone, myOverdue };
+    let myTodayCount = 0;
+    let myDoneCount = 0;
+    let myInProgressCount = 0;
+    let myNotDoneCount = 0;
+
+    const myTodayTasks: { task: any; user: User; status: TaskStatus }[] = [];
+    const myDoneTasks: { task: any; user: User; status: TaskStatus }[] = [];
+    const myInProgressTasks: { task: any; user: User; status: TaskStatus }[] = [];
+    const myNotDoneTasks: { task: any; user: User; status: TaskStatus }[] = [];
+
+    visible.forEach(t => {
+      const status = store.getUserTaskStatus(t.id, user.id);
+      const item = { task: t, user: user, status };
+
+      if (isToday(t.createdAt)) {
+        myTodayCount++;
+        myTodayTasks.push(item);
+      }
+
+      if (status === "done") {
+        myDoneCount++;
+        myDoneTasks.push(item);
+      } else if (status === "in_progress") {
+        myInProgressCount++;
+        myInProgressTasks.push(item);
+        if (!t.isDefault) {
+          myNotDoneCount++;
+          myNotDoneTasks.push(item);
+        }
+      } else {
+        if (!t.isDefault) {
+          myNotDoneCount++;
+          myNotDoneTasks.push(item);
+        }
+      }
+    });
+
+    return {
+      myTodayCount, myDoneCount, myInProgressCount, myNotDoneCount,
+      myTodayTasks, myDoneTasks, myInProgressTasks, myNotDoneTasks
+    };
   };
 
   const myStats = getMyStats();
 
   // Status type for stats
-  type StatKey = "today" | "done" | "notDone" | "overdue";
+  type StatKey = "today" | "done" | "inProgress" | "notDone";
   type TaskItem = { task: any; user: User; status: TaskStatus };
 
   const stats: { label: string; value: number; icon: any; tint: string; statKey: StatKey; tasks: TaskItem[] }[] = [
     {
       label: "Tugas hari ini",
-      value: user.role === "admin" ? adminStats.todayCount : myStats.myToday,
+      value: user.role === "admin" ? adminStats.todayCount : myStats.myTodayCount,
       icon: ListTodo,
       tint: "text-primary",
       statKey: "today",
-      tasks: adminStats.todayTasks
+      tasks: user.role === "admin" ? adminStats.todayTasks : myStats.myTodayTasks
     },
     {
       label: "Selesai",
-      value: user.role === "admin" ? adminStats.doneCount : myStats.myDone,
+      value: user.role === "admin" ? adminStats.doneCount : myStats.myDoneCount,
       icon: CheckCircle2,
       tint: "text-success",
       statKey: "done",
-      tasks: adminStats.doneTasks
+      tasks: user.role === "admin" ? adminStats.doneTasks : myStats.myDoneTasks
+    },
+    {
+      label: "Sedang dikerjakan",
+      value: user.role === "admin" ? adminStats.inProgressCount : myStats.myInProgressCount,
+      icon: Clock,
+      tint: "text-orange-500",
+      statKey: "inProgress",
+      tasks: user.role === "admin" ? adminStats.inProgressTasks : myStats.myInProgressTasks
     },
     {
       label: "Belum selesai",
-      value: user.role === "admin" ? adminStats.notDoneCount : myStats.myNotDone,
-      icon: Clock,
+      value: user.role === "admin" ? adminStats.notDoneCount : myStats.myNotDoneCount,
+      icon: ListTodo,
       tint: "text-warning",
       statKey: "notDone",
-      tasks: adminStats.notDoneTasks
-    },
-    {
-      label: "Overdue",
-      value: user.role === "admin" ? adminStats.overdueCount : myStats.myOverdue,
-      icon: AlertTriangle,
-      tint: "text-destructive",
-      statKey: "overdue",
-      tasks: adminStats.overdueTasks
+      tasks: user.role === "admin" ? adminStats.notDoneTasks : myStats.myNotDoneTasks
     },
   ];
 
@@ -211,8 +267,8 @@ function Dashboard() {
     );
   };
 
-  // Recent tasks list for dashboard
-  const recent = (user.role === "admin" ? tasks : visible)
+  // Recent tasks list for dashboard (exclude default tasks as per request)
+  const recent = (user.role === "admin" ? tasks.filter(t => !t.isDefault) : visible)
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .slice(0, 5);
   const userName = (id?: string | number) =>
@@ -410,23 +466,39 @@ const userRole = (id?: string | number) =>
                           <div key={u.id} className="flex items-center justify-between text-[11px]">
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="truncate font-medium">{u.name}</span>
-                              {status === "unread" ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="cursor-pointer"
-                                    onClick={() => setSelectedDefaultTask(t.id)}
-                                  >
-                                    Belum Baca
-                                  </Badge>
-                                ) : (
-                                  <Badge
-                                    variant="default"
-                                    className="cursor-pointer"
-                                   onClick={() => setSelectedDefaultTask(t.id)}
-                                  >
-                                    Sudah Baca
-                                  </Badge>
-                                )}
+                              <div className="shrink-0 flex items-center gap-1">
+                                {status === "unread" ? (
+                                    <Badge
+                                      variant="secondary"
+                                      className="cursor-pointer text-[8px] h-4 px-1"
+                                      onClick={() => setSelectedDefaultTask(t.id)}
+                                    >
+                                      Belum Baca
+                                    </Badge>
+                                  ) : status === "read" ? (
+                                    <Badge
+                                      variant="default"
+                                      className="cursor-pointer text-[8px] h-4 px-1"
+                                     onClick={() => setSelectedDefaultTask(t.id)}
+                                    >
+                                      Sudah Baca
+                                    </Badge>
+                                  ) : status === "in_progress" ? (
+                                    <Badge
+                                      className="cursor-pointer text-[8px] h-4 px-1 bg-orange-500 hover:bg-orange-600"
+                                     onClick={() => setSelectedDefaultTask(t.id)}
+                                    >
+                                      Dikerjakan
+                                    </Badge>
+                                  ) : (
+                                    <Badge
+                                      className="cursor-pointer text-[8px] h-4 px-1 bg-green-600 hover:bg-green-700"
+                                     onClick={() => setSelectedDefaultTask(t.id)}
+                                    >
+                                      Selesai
+                                    </Badge>
+                                  )}
+                              </div>
                             </div>
                           </div>
                         );
@@ -509,38 +581,32 @@ const userRole = (id?: string | number) =>
           <Card className="p-5 shadow-(--shadow-card)">
             <h2 className="mb-4 text-base font-semibold">Tugas Sedang Dikerjakan</h2>
             <div className="space-y-3">
-              {tasks.filter(t => {
-                // Only tagged tasks, not default
-                if (t.isDefault) return false;
-                const status = store.getUserTaskStatus(t.id, t.assignedTo!);
-                return status === "in_progress" && (user.role === "admin" || t.createdBy === user.id || t.assignedTo === user.id);
-              }).slice(0, 4).map(t => {
-                const logs = allLogs.filter(l => l.taskId === t.id && l.action === "progress").sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
-                const progress = t.isDefault ? (parseInt(logs[0]?.detail || "0")) : t.progress;
+              {adminStats.inProgressTasks.slice(0, 4).map(({ task: t, user: u }) => {
+                const progress = store.getUserTaskProgress(t.id, u.id);
+                const userLogs = allLogs.filter(l => l.taskId === t.id && l.userId === u.id && l.action === "progress")
+                  .sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+                const lastActive = userLogs[0]?.timestamp || t.createdAt;
+                
                 return (
-                  <div key={t.id} className="space-y-1 border-b border-border pb-2 last:border-0">
+                  <div key={`${t.id}-${u.id}`} className="space-y-1 border-b border-border pb-2 last:border-0">
                     <div className="flex items-center justify-between gap-2">
                       <div className="truncate text-sm font-medium">{t.title}</div>
                       <span className="text-xs font-bold text-primary shrink-0">{progress}%</span>
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-muted-foreground gap-2">
                       <div className="flex items-center gap-1.5 truncate">
-                        <span>Oleh: {userName(t.assignedTo ?? "")}</span>
-                        <Badge variant="secondary" className="px-1 py-0 h-3 text-[8px] uppercase font-bold">{userRole(t.assignedTo ?? "")}</Badge>
+                        <span>Oleh: {u.name}</span>
+                        <Badge variant="secondary" className="px-1 py-0 h-3 text-[8px] uppercase font-bold">{u.role}</Badge>
                         <span className="text-[8px] uppercase font-bold">
                           · dari {userName(t.createdBy)}
                         </span>
                       </div>
-                      <span className="shrink-0">{formatDistanceToNow(new Date(t.createdAt), { addSuffix: true })}</span>
+                      <span className="shrink-0">{formatDistanceToNow(new Date(lastActive), { addSuffix: true })}</span>
                     </div>
                   </div>
                 );
               })}
-              {tasks.filter(t => {
-                if (t.isDefault) return false;
-                const status = store.getUserTaskStatus(t.id, t.assignedTo!);
-                return status === "in_progress" && (user.role === "admin" || t.createdBy === user.id || t.assignedTo === user.id);
-              }).length === 0 && (
+              {adminStats.inProgressTasks.length === 0 && (
                 <div className="py-4 text-center text-sm text-muted-foreground">Belum ada tugas yang sedang diproses.</div>
               )}
             </div>
@@ -558,7 +624,35 @@ const userRole = (id?: string | number) =>
             <div className="space-y-3">
               {recent.map((t) => {
                 const targetUserId = t.assignedTo ?? "";
+                
+                // NEW: Helper to get relevant users for a task
+                const getRelevantUsers = () => {
+                  return users.filter(u => {
+                    if (t.isDefault) return u.role === 'hrd' || u.role === 'staff';
+                    if (t.assignedRole) return u.role === t.assignedRole;
+                    if (t.assignedTo?.includes(',')) return t.assignedTo.split(',').includes(String(u.id));
+                    if (t.assignedTo) return String(t.assignedTo) === String(u.id);
+                    return false;
+                  });
+                };
+
+                const isTeamTask = t.isDefault || t.assignedRole || t.assignedTo?.includes(',');
                 const status = store.getUserTaskStatus(t.id, user.role === "admin" ? targetUserId : user.id);
+                
+                // Calculate real progress (Always per-individual for the current user)
+                const realProgress = store.getUserTaskProgress(t.id, user.id);
+
+                // NEW: Team Status Summary for Admin (Keep for monitoring)
+                const getTeamStatusSummary = () => {
+                  if (user.role !== "admin" || !isTeamTask) return null;
+                  const relevantUsers = getRelevantUsers();
+                  const doneCount = relevantUsers.filter(u => store.getUserTaskStatus(t.id, u.id) === "done").length;
+                  const inProgressCount = relevantUsers.filter(u => store.getUserTaskStatus(t.id, u.id) === "in_progress").length;
+                  return { done: doneCount, inProgress: inProgressCount, total: relevantUsers.length };
+                };
+
+                const teamSummary = getTeamStatusSummary();
+
                 return (
                   <Link
                     key={t.id}
@@ -583,7 +677,15 @@ const userRole = (id?: string | number) =>
                           <div className="flex items-center gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">Penerima:</span>
                             <span className="text-[10px] font-semibold uppercase">
-                              {t.isDefault ? "Seluruh Tim (HR & STAFF)" : userName(t.assignedTo)}
+                              {t.isDefault ? (
+                                "Seluruh Tim (HR & STAFF)"
+                              ) : t.assignedRole ? (
+                                <span className="text-primary">Tim {t.assignedRole.toUpperCase()}</span>
+                              ) : t.assignedTo?.includes(',') ? (
+                                <span className="text-indigo-600">Tim Campuran</span>
+                              ) : (
+                                t.assignedTo ? userName(t.assignedTo) : "Belum ditentukan"
+                              )}
                             </span>
                           </div>
                           <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">•</span>
@@ -595,18 +697,42 @@ const userRole = (id?: string | number) =>
                           </div>
                           <span className="text-[10px] text-muted-foreground/50 hidden sm:inline">•</span>
                           <span className="text-[10px] text-muted-foreground uppercase">
-                            Deadline: {formatDistanceToNow(new Date(t.deadline), { addSuffix: true })}
+                            Waktu Kirim Tugasnya: {(() => {
+                              const d = parseDate(t.deadline);
+                              return d ? format(d, "dd MMM yyyy") : "—";
+                            })()}
                           </span>
                         </div>
                       </div>
                     </div>
-                    {user.role === "admin" && t.isDefault ? (
-                      <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 text-[10px] font-bold uppercase tracking-tighter py-0 h-5 shrink-0">
-                        Broadcast
-                      </Badge>
-                    ) : (
-                      <StatusBadge status={status} />
-                    )}
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      {user.role === "admin" && isTeamTask ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 text-[10px] font-bold uppercase tracking-tighter py-0 h-5 shrink-0">
+                            {t.isDefault ? "Broadcast" : "Team Task"}
+                          </Badge>
+                          {teamSummary && (
+                            <div className="text-[9px] font-bold text-muted-foreground whitespace-nowrap">
+                              <span className="text-green-600">{teamSummary.done}</span>/
+                              <span className="text-orange-500">{teamSummary.inProgress}</span>/
+                              <span>{teamSummary.total}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <StatusBadge status={status} />
+                      )}
+                      
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold tabular-nums">{realProgress}%</span>
+                        <div className="w-12 h-1 bg-muted rounded-full overflow-hidden hidden sm:block">
+                          <div 
+                            className="h-full bg-primary transition-all duration-500" 
+                            style={{ width: `${realProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </Link>
                 );
               })}
@@ -625,8 +751,8 @@ const userRole = (id?: string | number) =>
             <div className="space-y-4">
               {uniqueLogs.slice(0, 8).map((l) => {
                 const task = tasks.find(t => t.id === l.taskId);
-                const targetName = task?.isDefault ? "Seluruh Tim" : userName(task?.assignedTo);
-                const targetRole = task?.isDefault ? "HR & STAFF" : userRole(task?.assignedTo);
+                const targetName = task?.isDefault ? "Seluruh Tim" : task?.assignedRole ? `Tim ${task.assignedRole.toUpperCase()}` : task?.assignedTo?.includes(',') ? "Tim Campuran" : userName(task?.assignedTo);
+                const targetRole = task?.isDefault ? "HR & STAFF" : task?.assignedRole ? task.assignedRole : task?.assignedTo?.includes(',') ? "Mixed" : userRole(task?.assignedTo);
                 
                 return (
                   <div key={l.id} className="flex gap-3 text-sm">

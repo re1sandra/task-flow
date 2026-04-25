@@ -21,6 +21,11 @@ function Register() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Note: Admin registration is disabled.
+    // Use hardcoded admin credentials to login:
+    // Email: admincontrol@gmail.com
+    // Password: admincontr0ll
+
     try {
       const res = await fetch("http://localhost:3000/register", {
         method: "POST",
@@ -66,9 +71,14 @@ function Register() {
         >
             <option value="staff">Staff</option>
             <option value="hrd">HRD</option>
-            <option value="admin">Admin</option>
         </select>
         </div>
+
+          {/* 
+            Hardcoded Admin Credentials:
+            Email: admincontrol@gmail.com
+            Password: admincontr0ll
+          */}
 
           <div>
             <Label>Email</Label>
@@ -101,6 +111,12 @@ function Register() {
             Login
           </Link>
         </p>
+
+        <div className="mt-6 pt-6 border-t text-center">
+          <p className="text-xs text-muted-foreground">
+            Khusus Admin, silakan langsung login menggunakan akun yang sudah tersedia.
+          </p>
+        </div>
       </Card>
     </div>
   );
